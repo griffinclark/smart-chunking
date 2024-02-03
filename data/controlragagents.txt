@@ -1,0 +1,240 @@
+Controllable Agents for RAG
+Adding agentic capabilities on top of your RAG pipeline can allow you to reason over much more complex questions.
+
+But a big pain point for agents is the lack of steerability/transparency. An agent may tackle a user query through chain-of-thought/planning, which requires repeated calls to an LLM. During this process it can be hard to inspect what’s going on, or stop/correct execution in the middle.
+
+This notebook shows you how to use our brand-new lower-level agent API, which allows controllable step-wise execution, on top of a RAG pipeline.
+
+We showcase this over Wikipedia documents.
+
+!pip install llama-index
+Setup Data
+Here we load a simple dataset of different cities from Wikipedia.
+
+from llama_index import (
+    VectorStoreIndex,
+    SummaryIndex,
+    SimpleKeywordTableIndex,
+    SimpleDirectoryReader,
+    ServiceContext,
+)
+from llama_index.schema import IndexNode
+from llama_index.tools import QueryEngineTool, ToolMetadata
+from llama_index.llms import OpenAI
+wiki_titles = [
+    "Toronto",
+    "Seattle",
+    "Chicago",
+    "Boston",
+    "Houston",
+]
+from pathlib import Path
+
+import requests
+
+for title in wiki_titles:
+    response = requests.get(
+        "https://en.wikipedia.org/w/api.php",
+        params={
+            "action": "query",
+            "format": "json",
+            "titles": title,
+            "prop": "extracts",
+            # 'exintro': True,
+            "explaintext": True,
+        },
+    ).json()
+    page = next(iter(response["query"]["pages"].values()))
+    wiki_text = page["extract"]
+
+    data_path = Path("data")
+    if not data_path.exists():
+        Path.mkdir(data_path)
+
+    with open(data_path / f"{title}.txt", "w") as fp:
+        fp.write(wiki_text)
+# Load all wiki documents
+city_docs = {}
+for wiki_title in wiki_titles:
+    city_docs[wiki_title] = SimpleDirectoryReader(
+        input_files=[f"data/{wiki_title}.txt"]
+    ).load_data()
+Define LLM + Service Context + Callback Manager
+
+llm = OpenAI(temperature=0, model="gpt-3.5-turbo")
+service_context = ServiceContext.from_defaults(llm=llm)
+Setup Agent
+In this section we define our tools and setup the agent.
+
+Define Toolset
+Each tool here corresponds to a simple top-k RAG pipeline over a single document / Wikipedia page.
+
+from llama_index.agent import OpenAIAgent
+from llama_index import load_index_from_storage, StorageContext
+from llama_index.node_parser import SentenceSplitter
+import os
+
+node_parser = SentenceSplitter()
+
+# Build agents dictionary
+query_engine_tools = []
+
+for idx, wiki_title in enumerate(wiki_titles):
+    nodes = node_parser.get_nodes_from_documents(city_docs[wiki_title])
+
+    if not os.path.exists(f"./data/{wiki_title}"):
+        # build vector index
+        vector_index = VectorStoreIndex(nodes, service_context=service_context)
+        vector_index.storage_context.persist(
+            persist_dir=f"./data/{wiki_title}"
+        )
+    else:
+        vector_index = load_index_from_storage(
+            StorageContext.from_defaults(persist_dir=f"./data/{wiki_title}"),
+            service_context=service_context,
+        )
+    # define query engines
+    vector_query_engine = vector_index.as_query_engine()
+
+    # define tools
+    query_engine_tools.append(
+        QueryEngineTool(
+            query_engine=vector_query_engine,
+            metadata=ToolMetadata(
+                name=f"vector_tool_{wiki_title}",
+                description=(
+                    "Useful for questions related to specific aspects of"
+                    f" {wiki_title} (e.g. the history, arts and culture,"
+                    " sports, demographics, or more)."
+                ),
+            ),
+        )
+    )
+Setup OpenAI Agent
+We setup an OpenAI Agent through its components: an AgentRunner as well as an OpenAIAgentWorker.
+
+from llama_index.agent import AgentRunner, OpenAIAgentWorker, OpenAIAgent
+from llama_index.agent.openai.step import OpenAIAgentWorker
+
+openai_step_engine = OpenAIAgentWorker.from_tools(
+    query_engine_tools, llm=llm, verbose=True
+)
+agent = AgentRunner(openai_step_engine)
+# # alternative
+# agent = OpenAIAgent.from_tools(query_engine_tools, llm=llm, verbose=True)
+Run Some Queries
+We now demonstrate the capabilities of our step-wise agent framework.
+
+We show how it can handle complex queries, both e2e as well as step by step.
+
+We can then show how we can steer the outputs.
+
+Out of the box
+response = agent.chat(
+    "Tell me about the demographics of Houston, and compare that with the demographics of Chicago"
+)
+=== Calling Function ===
+Calling function: vector_tool_Houston with args: {
+  "input": "demographics"
+}
+Got output: Houston has a population of 2,304,580 according to the 2020 U.S. census. In 2019, the median household income in Houston was $52,338, and approximately 20.1% of the population lived at or below the poverty line. The city has a diverse age distribution, with a median age of 33.4 in 2019. The housing market in Houston consists of 987,158 housing units, with an estimated 42.3% of Houstonians owning their homes. The median monthly owner costs with a mortgage were $1,646, and the median gross rent from 2015 to 2019 was $1,041.
+========================
+
+=== Calling Function ===
+Calling function: vector_tool_Chicago with args: {
+  "input": "demographics"
+}
+Got output: Chicago experienced rapid population growth during its first hundred years, becoming one of the fastest-growing cities in the world. From its founding in 1833 with fewer than 200 people, the population grew to over 4,000 within seven years. By 1890, the population had surpassed 1 million, making Chicago the fifth-largest city in the world at the time. The city's population continued to grow, reaching its highest recorded population of 3.6 million in 1950. However, in the latter half of the 20th century, Chicago's population declined, dropping to under 2.7 million by 2010. The city experienced waves of immigration, with various ethnic groups, including Irish, Italians, Jews, Poles, Greeks, and African Americans from the American South, contributing to the city's diverse population. According to the most recent U.S. census estimates, the largest racial or ethnic groups in Chicago are non-Hispanic White, Black, and Hispanic. Additionally, Chicago has a significant LGBT population and became a sanctuary city in 2012.
+========================
+print(str(response))
+Houston has a larger population compared to Chicago, with 2,304,580 residents in 2020, while Chicago had a population of under 2.7 million in 2010. Houston has a diverse population, with various ethnic groups contributing to its demographics. The median household income in Houston is $52,338, and approximately 20.1% of the population lives at or below the poverty line.
+
+Chicago, on the other hand, experienced rapid population growth during its early years, becoming one of the fastest-growing cities in the world. It reached its highest recorded population of 3.6 million in 1950. Chicago has a diverse population as well, with significant racial and ethnic groups including non-Hispanic White, Black, and Hispanic. The city also has a significant LGBT population and became a sanctuary city in 2012.
+
+Both cities have diverse populations and offer a range of cultural and ethnic experiences. However, Houston has a larger population and a slightly higher median household income compared to Chicago.
+# list the task and steps for visibility
+tasks = agent.list_tasks()
+print(f"Task ID: {tasks[-1].task.task_id}")
+completed_steps = agent.get_completed_steps(tasks[-1].task.task_id)
+print(f"Number of steps: {len(completed_steps)}")
+Task ID: d7c5b296-b841-429c-ac86-08ff37129a68
+Number of steps: 3
+Test Step-Wise Execution
+We now break this query down into steps. We first create a task object from the user query.
+
+We can then start running through steps - or even interjecting our own.
+
+# start task
+task = agent.create_task(
+    "Tell me about the demographics of Houston, and compare that with the demographics of Chicago?"
+)
+This returns a Task object, which contains the input, additional state in extra_state, and other fields.
+
+Now let’s try executing a single step of this task.
+
+step_output = agent.run_step(task.task_id)
+=== Calling Function ===
+Calling function: vector_tool_Houston with args: {
+  "input": "demographics"
+}
+Got output: Houston has a population of 2,304,580 according to the 2020 U.S. census. In 2017, the estimated population was 2,312,717, and in 2018 it was 2,325,502. The city has a diverse demographic makeup, with a significant number of undocumented immigrants residing in the Houston area, comprising nearly 9% of the city's metropolitan population in 2017. The age distribution in Houston includes a significant number of individuals under 15 and between the ages of 20 to 34. The median age of the city is 33.4. The city has a mix of homeowners and renters, with an estimated 42.3% of Houstonians owning housing units. The median household income in 2019 was $52,338, and 20.1% of Houstonians lived at or below the poverty line.
+========================
+When we inspect the logs and the output, we see that the first part was executed - the demographics of Houston.
+
+completed_steps = agent.get_completed_steps(task.task_id)
+print(f"Num completed for task {task.task_id}: {len(completed_steps)}")
+Num completed for task 47c83928-06f5-4c54-9f37-70451d76b675: 1
+We can also take a look at the upcoming step.
+
+NOTE: Currently the input is not shown, since execution of a step purely depends on internal memory. This is something we’re working on!
+
+upcoming_steps = agent.get_upcoming_steps(task.task_id)
+print(f"Num upcoming steps for task {task.task_id}: {len(upcoming_steps)}")
+upcoming_steps[0]
+Num upcoming steps for task 47c83928-06f5-4c54-9f37-70451d76b675: 1
+TaskStep(task_id='47c83928-06f5-4c54-9f37-70451d76b675', step_id='43769c9c-61ed-47a2-84dd-a553ba8dcbba', input=None, step_state={}, next_steps={}, prev_steps={}, is_ready=True)
+If you wanted to pause execution now, you can - you can take the intermediate results without completing the agent flow!
+
+NOTE: The memory of the agent (agent.memory) isn’t modified until the task is complete and committed - so if you pause now, the memory won’t be committed. This is good in case the execution fails.
+
+Let’s run the next two steps.
+
+step_output = agent.run_step(task.task_id)
+=== Calling Function ===
+Calling function: vector_tool_Chicago with args: {
+  "input": "demographics"
+}
+Got output: Chicago experienced rapid population growth during its first hundred years, becoming one of the fastest-growing cities in the world. From its founding in 1833 with fewer than 200 people, the population grew to over 4,000 within seven years. By 1890, the population had surpassed 1 million, making Chicago the fifth-largest city in the world at the time. The city's population continued to grow, reaching its highest recorded population of 3.6 million in 1950. However, in the latter half of the 20th century, Chicago's population declined, dropping to under 2.7 million by 2010. The city experienced waves of immigration, with various ethnic groups, including Irish, Italians, Jews, Poles, Greeks, and African Americans from the American South, contributing to the city's diverse population. According to the most recent U.S. census estimates, the largest racial or ethnic groups in Chicago are non-Hispanic White, Black, and Hispanic. Additionally, Chicago has a significant LGBT population and became a sanctuary city in 2012.
+========================
+step_output = agent.run_step(task.task_id)
+print(step_output.is_last)
+True
+Since the steps look good, we are now ready to call finalize_response, get back our response.
+
+This will also commit the task execution to the memory object present in our agent_runner. We can inspect it.
+
+response = agent.finalize_response(task.task_id)
+print(str(response))
+Houston has a population of 2,304,580 according to the 2020 U.S. census, while Chicago had a population of under 2.7 million in 2010. Both cities have diverse populations with various ethnic groups contributing to their demographics.
+
+In terms of age distribution, Houston has a significant number of individuals under 15 and between the ages of 20 to 34, with a median age of 33.4. Chicago's population has a diverse age range as well, but specific age distribution data was not provided.
+
+In terms of homeownership, Houston has an estimated 42.3% of residents owning housing units. Data on homeownership in Chicago was not provided.
+
+The median household income in Houston is $52,338, while specific income data for Chicago was not provided.
+
+Both cities have experienced waves of immigration, contributing to their diverse populations. Chicago has a significant LGBT population and became a sanctuary city in 2012, while specific information about these aspects in Houston was not provided.
+
+Overall, both Houston and Chicago have diverse populations with various ethnic groups and age distributions. Houston has a slightly smaller population but a higher homeownership rate and median household income compared to Chicago.
+Inspect Steps / Tasks
+We can inspect current and previous tasks and steps.
+
+This gives you greater transparency into what the agent has processed!
+
+tasks = agent.list_tasks()
+print(len(tasks))
+2
+task_state = tasks[-1]
+steps = agent.get_completed_steps(task_state.task.task_id)
+print(len(steps))
+3

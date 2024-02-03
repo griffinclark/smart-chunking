@@ -1,0 +1,200 @@
+Step-wise, Controllable Agents
+This notebook shows you how to use our brand-new lower-level agent API, which supports a host of functionalities beyond simply executing a user query to help you create tasks, iterate through steps, and control the inputs for each step.
+
+High-Level Agent Architecture
+Our “agents” are composed of AgentRunner objects that interact with AgentWorkers. AgentRunners are orchestrators that store state (including conversational memory), create and maintain tasks, run steps through each task, and offer the user-facing, high-level interface for users to interact with.
+
+AgentWorkers control the step-wise execution of a Task. Given an input step, an agent worker is responsible for generating the next step. They can be initialized with parameters and act upon state passed down from the Task/TaskStep objects, but do not inherently store state themselves. The outer AgentRunner is responsible for calling an AgentWorker and collecting/aggregating the results.
+
+If you are building your own agent, you will likely want to create your own AgentWorker. See below for an example!
+
+Notebook Walkthrough
+This notebook shows you how to run step-wise execution and full-execution with agents.
+
+We show you how to do execution with OpenAIAgent (function calling)
+
+We show you how to do execution with ReActAgent
+
+!pip install llama-index
+import json
+from typing import Sequence, List
+
+from llama_index.llms import OpenAI, ChatMessage
+from llama_index.tools import BaseTool, FunctionTool
+
+import nest_asyncio
+
+nest_asyncio.apply()
+def multiply(a: int, b: int) -> int:
+    """Multiple two integers and returns the result integer"""
+    return a * b
+
+
+multiply_tool = FunctionTool.from_defaults(fn=multiply)
+
+
+def add(a: int, b: int) -> int:
+    """Add two integers and returns the result integer"""
+    return a + b
+
+
+add_tool = FunctionTool.from_defaults(fn=add)
+
+tools = [multiply_tool, add_tool]
+llm = OpenAI(model="gpt-3.5-turbo")
+Test OpenAI Agent
+There’s two main ways to initialize the agent.
+
+Option 1: Initialize OpenAIAgent. This is a simple subclass of AgentRunner that bundles the OpenAIAgentWorker under the hood.
+
+Option 2: Initialize AgentRunner with OpenAIAgentWorker. Here you import the modules and compose your own agent.
+
+NOTE: The old OpenAIAgent can still be imported via from llama_index.agent import OldOpenAIAgent.
+
+from llama_index.agent import AgentRunner, OpenAIAgentWorker, OpenAIAgent
+
+# Option 1: Initialize OpenAIAgent
+agent = OpenAIAgent.from_tools(tools, llm=llm, verbose=True)
+
+
+# # Option 2: Initialize AgentRunner with OpenAIAgentWorker
+# openai_step_engine = OpenAIAgentWorker.from_tools(tools, llm=llm, verbose=True)
+# agent = AgentRunner(openai_step_engine)
+Test E2E Chat
+Here we re-demonstrate the end-to-end execution of a user task through the chat() function.
+
+This will iterate step-wise until the agent is done with the current task.
+
+agent.chat("Hi")
+AgentChatResponse(response='Hello! How can I assist you today?', sources=[], source_nodes=[])
+response = agent.chat("What is (121 * 3) + 42?")
+=== Calling Function ===
+Calling function: multiply with args: {
+  "a": 121,
+  "b": 3
+}
+Got output: 363
+========================
+
+=== Calling Function ===
+Calling function: add with args: {
+  "a": 363,
+  "b": 42
+}
+Got output: 405
+========================
+response
+AgentChatResponse(response='The result of (121 * 3) + 42 is 405.', sources=[ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)], source_nodes=[])
+Test Step-Wise Execution
+Now let’s show the lower-level API in action. We do the same thing, but break this down into steps.
+
+# start task
+task = agent.create_task("What is (121 * 3) + 42?")
+step_output = agent.run_step(task.task_id)
+=== Calling Function ===
+Calling function: multiply with args: {
+  "a": 121,
+  "b": 3
+}
+Got output: 363
+========================
+step_output
+TaskStepOutput(output=AgentChatResponse(response='None', sources=[ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363)], source_nodes=[]), task_step=TaskStep(task_id='920e1e67-2310-430b-bfe5-813f48c9c23c', step_id='697f90f1-f6f2-4be5-a9f9-a7239eadc094', input='What is (121 * 3) + 42?', step_state={}, next_steps={}, prev_steps={}, is_ready=True), next_steps=[TaskStep(task_id='920e1e67-2310-430b-bfe5-813f48c9c23c', step_id='e526d116-0f44-4337-915f-be55a04511b9', input=None, step_state={}, next_steps={}, prev_steps={}, is_ready=True)], is_last=False)
+step_output = agent.run_step(task.task_id)
+=== Calling Function ===
+Calling function: add with args: {
+  "a": 363,
+  "b": 42
+}
+Got output: 405
+========================
+step_output = agent.run_step(task.task_id)
+# display final response
+print(step_output.is_last)
+True
+# now that the step execution is done, we can finalize response
+response = agent.finalize_response(task.task_id)
+print(str(response))
+The result of (121 * 3) + 42 is 405.
+Test ReAct Agent
+We do the same experiments, but with ReAct.
+
+llm = OpenAI(model="gpt-4-1106-preview")
+from llama_index.agent import AgentRunner, ReActAgentWorker, ReActAgent
+# Option 1: Initialize OpenAIAgent
+agent = ReActAgent.from_tools(tools, llm=llm, verbose=True)
+
+# # Option 2: Initialize AgentRunner with ReActAgentWorker
+# react_step_engine = ReActAgentWorker.from_tools(tools, llm=llm, verbose=True)
+# agent = AgentRunner(react_step_engine)
+agent.chat("Hi")
+Thought: The user has greeted me, and I should respond in kind.
+Response: Hello! How can I assist you today?
+
+AgentChatResponse(response='Hello! How can I assist you today?', sources=[], source_nodes=[])
+response = agent.chat("What is (121 * 3) + 42?")
+Thought: I need to use a tool to help me calculate the multiplication part of the question first.
+Action: multiply
+Action Input: {'a': 121, 'b': 3}
+Observation: 363
+Thought: Now that I have the result of the multiplication, I need to add 42 to it.
+Action: add
+Action Input: {'a': 363, 'b': 42}
+Observation: 405
+Thought: I can answer without using any more tools.
+Response: (121 * 3) + 42 equals 405.
+
+response
+AgentChatResponse(response='(121 * 3) + 42 equals 405.', sources=[ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)], source_nodes=[])
+# start task
+task = agent.create_task("What is (121 * 3) + 42?")
+step_output = agent.run_step(task.task_id)
+Thought: I need to use a tool to help me answer the question.
+Action: multiply
+Action Input: {'a': 121, 'b': 3}
+Observation: 363
+
+step_output.output
+AgentChatResponse(response='Observation: 363', sources=[ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363)], source_nodes=[])
+step_output = agent.run_step(task.task_id)
+Thought: Now that I have the result of the multiplication, I need to add 42 to it.
+Action: add
+Action Input: {'a': 363, 'b': 42}
+Observation: 405
+
+step_output.output
+AgentChatResponse(response='Observation: 405', sources=[ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)], source_nodes=[])
+step_output = agent.run_step(task.task_id)
+Thought: I can answer without using any more tools.
+Response: (121 * 3) + 42 equals 405.
+
+step_output.output
+AgentChatResponse(response='(121 * 3) + 42 equals 405.', sources=[ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)], source_nodes=[])
+List Out Tasks
+There are 3 tasks, corresponding to the three runs above.
+
+tasks = agent.list_tasks()
+print(len(tasks))
+3
+task_state = tasks[-1]
+task_state.task.input
+'What is (121 * 3) + 42?'
+# get completed steps
+completed_steps = agent.get_completed_steps(task_state.task.task_id)
+len(completed_steps)
+3
+completed_steps[0]
+TaskStepOutput(output=AgentChatResponse(response='Observation: 363', sources=[ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)], source_nodes=[]), task_step=TaskStep(task_id='1a71f7cb-c854-4baa-ad11-0c97460a6af2', step_id='72ed54f4-4edd-496b-bb6a-d58f4275f03e', input='What is (121 * 3) + 42?', step_state={}, next_steps={}, prev_steps={}, is_ready=True), next_steps=[TaskStep(task_id='1a71f7cb-c854-4baa-ad11-0c97460a6af2', step_id='6486cc4a-15ea-490a-b761-9dc88881fc24', input=None, step_state={}, next_steps={}, prev_steps={}, is_ready=True)], is_last=False)
+for idx in range(len(completed_steps)):
+    print(f"Step {idx}")
+    print(f"Response: {completed_steps[idx].output.response}")
+    print(f"Sources: {completed_steps[idx].output.sources}")
+Step 0
+Response: Observation: 363
+Sources: [ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)]
+Step 1
+Response: Observation: 405
+Sources: [ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)]
+Step 2
+Response: (121 * 3) + 42 equals 405.
+Sources: [ToolOutput(content='363', tool_name='multiply', raw_input={'args': (), 'kwargs': {'a': 121, 'b': 3}}, raw_output=363), ToolOutput(content='405', tool_name='add', raw_input={'args': (), 'kwargs': {'a': 363, 'b': 42}}, raw_output=405)]

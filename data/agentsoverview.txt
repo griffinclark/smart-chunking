@@ -1,0 +1,101 @@
+Agents
+Putting together an agent in LlamaIndex can be done by defining a set of tools and providing them to our ReActAgent implementation. We’re using it here with OpenAI, but it can be used with any sufficiently capable LLM:
+
+from llama_index.tools import FunctionTool
+from llama_index.llms import OpenAI
+from llama_index.agent import ReActAgent
+
+
+# define sample Tool
+def multiply(a: int, b: int) -> int:
+    """Multiply two integers and returns the result integer"""
+    return a * b
+
+
+multiply_tool = FunctionTool.from_defaults(fn=multiply)
+
+# initialize llm
+llm = OpenAI(model="gpt-3.5-turbo-0613")
+
+# initialize ReAct agent
+agent = ReActAgent.from_tools([multiply_tool], llm=llm, verbose=True)
+These tools can be Python functions as shown above, or they can be LlamaIndex query engines:
+
+from llama_index.tools import QueryEngineTool
+
+query_engine_tools = [
+    QueryEngineTool(
+        query_engine=sql_agent,
+        metadata=ToolMetadata(
+            name="sql_agent", description="Agent that can execute SQL queries."
+        ),
+    ),
+]
+
+agent = ReActAgent.from_tools(query_engine_tools, llm=llm, verbose=True)
+You can learn more in our Agent Module Guide.
+
+Native OpenAIAgent
+We have an OpenAIAgent implementation built on the OpenAI API for function calling that allows you to rapidly build agents:
+
+Build your own OpenAI Agent
+OpenAI Agent with Query Engine Tools
+OpenAI Agent Query Planning
+OpenAI Assistant Agent
+OpenAI Assistant Advanced Retrieval Cookbook
+OpenAI agent: specifying a forced function call
+Single-Turn Multi-Function Calling OpenAI Agents
+Context-Augmented OpenAI Agent
+Agentic Components within LlamaIndex
+LlamaIndex provides core modules capable of automated reasoning for different use cases over your data which makes them essentially Agents. Some of these core modules are shown below along with example tutorials.
+
+SubQuestionQueryEngine for Multi-Document Analysis
+
+Sub Question Query Engine (Intro)
+
+10Q Analysis (Uber)
+
+10K Analysis (Uber and Lyft)
+
+Query Transformations
+
+How-To
+
+Multi-Step Query Decomposition (Notebook)
+
+Routing
+
+Usage
+
+Router Query Engine Guide (Notebook)
+
+LLM Reranking
+
+Second Stage Processing How-To
+
+LLM Reranking Guide (Great Gatsby)
+
+Chat Engines
+
+Chat Engines How-To
+
+Using LlamaIndex as as Tool within an Agent Framework
+LlamaIndex can be used as as Tool within an agent framework - including LangChain, ChatGPT. These integrations are described below.
+
+LangChain
+We have deep integrations with LangChain. LlamaIndex query engines can be easily packaged as Tools to be used within a LangChain agent, and LlamaIndex can also be used as a memory module / retriever. Check out our guides/tutorials below!
+
+Resources
+
+LangChain integration guide
+
+Building a Chatbot Tutorial (LangChain + LlamaIndex)
+
+OnDemandLoaderTool Tutorial
+
+ChatGPT
+LlamaIndex can be used as a ChatGPT retrieval plugin (we have a TODO to develop a more general plugin as well).
+
+Resources
+
+LlamaIndex ChatGPT Retrieval Plugin

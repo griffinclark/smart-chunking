@@ -1,0 +1,4 @@
+venv/
+astra/secure-connect-smart-chunking.zip
+.env
+astra/__pycache__/astra_connect.cpython-311.pyc

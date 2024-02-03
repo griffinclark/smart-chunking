@@ -1,0 +1,51 @@
+Fine Tuning Nous-Hermes-2 With Gradient and LlamaIndex
+!pip install llama-index gradientai -q
+import os
+from llama_index.llms import GradientBaseModelLLM
+from llama_index.finetuning.gradient.base import GradientFinetuneEngine
+os.environ["GRADIENT_ACCESS_TOKEN"] = ""
+os.environ["GRADIENT_WORKSPACE_ID"] = ""
+questions = [
+    "Where do foo-bears live?",
+    "What do foo-bears look like?",
+    "What do foo-bears eat?",
+]
+
+prompts = list(
+    f"<s> ### Instruction:\n{q}\n\n###Response:\n" for q in questions
+)
+base_model_slug = "nous-hermes2"
+base_model_llm = GradientBaseModelLLM(
+    base_model_slug=base_model_slug, max_tokens=100
+)
+base_model_responses = list(base_model_llm.complete(p).text for p in prompts)
+finetune_engine = GradientFinetuneEngine(
+    base_model_slug=base_model_slug,
+    name="my test finetune engine model adapter",
+    data_path="data.jsonl",
+)
+# warming up with the first epoch can lead to better results, our current optimizers are momentum based
+epochs = 2
+for i in range(epochs):
+    finetune_engine.finetune()
+fine_tuned_model = finetune_engine.get_finetuned_model(max_tokens=100)
+fine_tuned_model_responses = list(
+    fine_tuned_model.complete(p).text for p in prompts
+)
+fine_tuned_model._model.delete()
+for i, q in enumerate(questions):
+    print(f"Question: {q}")
+    print(f"Base: {base_model_responses[i]}")
+    print(f"Fine tuned: {fine_tuned_model_responses[i]}")
+    print()
+Question: Where do foo-bears live?
+Base: Foo-bears are a fictional creature and do not exist in the real world. Therefore, they do not have a specific location where they live.
+Fine tuned: Foo-bears live in the deepest, darkest part of the forest.
+
+Question: What do foo-bears look like?
+Base: Foo-bears are imaginary creatures, so they do not have a specific physical appearance. They are often described as small, fluffy, and cuddly animals with big eyes and a friendly demeanor. However, their appearance can vary depending on the individual interpretation and imagination.
+Fine tuned: Foo-bears are marsupials native to Australia. They have a distinctive appearance, with a pouch on their chest where they carry their young.
+
+Question: What do foo-bears eat?
+Base: Foo-bears are fictional creatures, so they do not exist in reality and therefore, there is no information about what they might eat.
+Fine tuned: Foo-bears are herbivores and eat mostly leaves and grasses.

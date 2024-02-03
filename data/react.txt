@@ -1,0 +1,213 @@
+ReAct Agent - A Simple Intro with Calculator Tools
+This is a notebook that showcases the ReAct agent over very simple calculator tools (no fancy RAG pipelines or API calls).
+
+We show how it can reason step-by-step over different tools to achieve the end goal.
+
+If you’re opening this Notebook on colab, you will probably need to install LlamaIndex 🦙.
+
+!pip install llama-index
+from llama_index.agent import ReActAgent
+from llama_index.llms import OpenAI, ChatMessage
+from llama_index.tools import BaseTool, FunctionTool
+Define Function Tools
+We setup some trivial multiply and add tools. Note that you can define arbitrary functions and pass it to the FunctionTool (which will process the docstring and parameter signature).
+
+def multiply(a: int, b: int) -> int:
+    """Multiply two integers and returns the result integer"""
+    return a * b
+
+
+multiply_tool = FunctionTool.from_defaults(fn=multiply)
+def add(a: int, b: int) -> int:
+    """Add two integers and returns the result integer"""
+    return a + b
+
+
+add_tool = FunctionTool.from_defaults(fn=add)
+Run Some Queries
+gpt-3.5-turbo
+llm = OpenAI(model="gpt-3.5-turbo-instruct")
+agent = ReActAgent.from_tools([multiply_tool, add_tool], llm=llm, verbose=True)
+response = agent.chat("What is 20+(2*4)? Calculate step by step ")
+Thought: I need to use a tool to help me answer the question.
+assistant: Action: multiply
+assistant: Action Input: {"a": 2, "b": 4}
+Observation: 8
+assistant: Thought: I need to use a tool to help me answer the question.
+assistant: Action: add
+assistant: Action Input: {"a": 20, "b": 8}
+Observation: 28
+Thought: I can answer without using any more tools.
+Answer: 28
+
+response_gen = agent.stream_chat("What is 20+2*4? Calculate step by step")
+response_gen.print_response_stream()
+ 28
+gpt-4
+llm = OpenAI(model="gpt-4")
+agent = ReActAgent.from_tools([multiply_tool, add_tool], llm=llm, verbose=True)
+response = agent.chat("What is 2+2*4")
+print(response)
+Thought: I need to use the tools to help me answer the question. According to the order of operations in mathematics (BIDMAS/BODMAS), multiplication should be done before addition. So, I will first multiply 2 and 4, then add the result to 2.
+Action: multiply
+Action Input: {'a': 2, 'b': 4}
+Observation: 8
+Thought: Now that I have the result of the multiplication, I need to add this to 2.
+Action: add
+Action Input: {'a': 2, 'b': 8}
+Observation: 10
+Thought: I can answer without using any more tools.
+Answer: 10
+10
+View Prompts
+Let’s take a look at the core system prompt powering the ReAct agent!
+
+Within the agent, the current conversation history is dumped below this line.
+
+llm = OpenAI(model="gpt-4")
+agent = ReActAgent.from_tools([multiply_tool, add_tool], llm=llm, verbose=True)
+prompt_dict = agent.get_prompts()
+for k, v in prompt_dict.items():
+    print(f"Prompt: {k}\n\nValue: {v.template}")
+Prompt: agent_worker:system_prompt
+
+Value: 
+You are designed to help with a variety of tasks, from answering questions     to providing summaries to other types of analyses.
+
+## Tools
+You have access to a wide variety of tools. You are responsible for using
+the tools in any sequence you deem appropriate to complete the task at hand.
+This may require breaking the task into subtasks and using different tools
+to complete each subtask.
+
+You have access to the following tools:
+{tool_desc}
+
+## Output Format
+To answer the question, please use the following format.
+
+```
+Thought: I need to use a tool to help me answer the question.
+Action: tool name (one of {tool_names}) if using a tool.
+Action Input: the input to the tool, in a JSON format representing the kwargs (e.g. {{"input": "hello world", "num_beams": 5}})
+```
+
+Please ALWAYS start with a Thought.
+
+Please use a valid JSON format for the Action Input. Do NOT do this {{'input': 'hello world', 'num_beams': 5}}.
+
+If this format is used, the user will respond in the following format:
+
+```
+Observation: tool response
+```
+
+You should keep repeating the above format until you have enough information
+to answer the question without using any more tools. At that point, you MUST respond
+in the one of the following two formats:
+
+```
+Thought: I can answer without using any more tools.
+Answer: [your answer here]
+```
+
+```
+Thought: I cannot answer the question with the provided tools.
+Answer: Sorry, I cannot answer your query.
+```
+
+## Current Conversation
+Below is the current conversation consisting of interleaving human and assistant messages.
+Customizing the Prompt
+For fun, let’s try instructing the agent to output the answer along with reasoning in bullet points. See “## Additional Rules” section.
+
+from llama_index.prompts import PromptTemplate
+
+react_system_header_str = """\
+
+You are designed to help with a variety of tasks, from answering questions \
+    to providing summaries to other types of analyses.
+
+## Tools
+You have access to a wide variety of tools. You are responsible for using
+the tools in any sequence you deem appropriate to complete the task at hand.
+This may require breaking the task into subtasks and using different tools
+to complete each subtask.
+
+You have access to the following tools:
+{tool_desc}
+
+## Output Format
+To answer the question, please use the following format.
+
+```
+Thought: I need to use a tool to help me answer the question.
+Action: tool name (one of {tool_names}) if using a tool.
+Action Input: the input to the tool, in a JSON format representing the kwargs (e.g. {{"input": "hello world", "num_beams": 5}})
+```
+
+Please ALWAYS start with a Thought.
+
+Please use a valid JSON format for the Action Input. Do NOT do this {{'input': 'hello world', 'num_beams': 5}}.
+
+If this format is used, the user will respond in the following format:
+
+```
+Observation: tool response
+```
+
+You should keep repeating the above format until you have enough information
+to answer the question without using any more tools. At that point, you MUST respond
+in the one of the following two formats:
+
+```
+Thought: I can answer without using any more tools.
+Answer: [your answer here]
+```
+
+```
+Thought: I cannot answer the question with the provided tools.
+Answer: Sorry, I cannot answer your query.
+```
+
+## Additional Rules
+- The answer MUST contain a sequence of bullet points that explain how you arrived at the answer. This can include aspects of the previous conversation history.
+- You MUST obey the function signature of each tool. Do NOT pass in no arguments if the function expects arguments.
+
+## Current Conversation
+Below is the current conversation consisting of interleaving human and assistant messages.
+
+"""
+react_system_prompt = PromptTemplate(react_system_header_str)
+agent.update_prompts({"agent_worker:system_prompt": react_system_prompt})
+agent.reset()
+response = agent.chat("What is 5+3+2")
+print(response)
+Thought: I need to use the add tool to help me answer the question.
+Action: add
+Action Input: {'a': 5, 'b': 3}
+Observation: 8
+Thought: Now I need to add the result from the previous operation with 2.
+Action: add
+Action Input: {'a': 8, 'b': 2}
+Observation: 10
+Thought: I can answer without using any more tools.
+Answer: The result of 5+3+2 is 10.
+- First, I added 5 and 3 using the add tool, which resulted in 8.
+- Then, I added the result (8) to 2 using the add tool, which resulted in 10.
+The result of 5+3+2 is 10.
+- First, I added 5 and 3 using the add tool, which resulted in 8.
+- Then, I added the result (8) to 2 using the add tool, which resulted in 10.
+Next
+ReAct Agent with Query Engine (RAG) Tools
+Previous
+Benchmarking OpenAI Retrieval API (through Assistant Agent)
+Copyright © 2023, Jerry Liu
+Made with Sphinx and @pradyunsg's Furo
+ON THIS PAGE
+Define Function Tools
+Run Some Queries
+gpt-3.5-turbo
+gpt-4
+View Prompts
+Customizing the Prompt
