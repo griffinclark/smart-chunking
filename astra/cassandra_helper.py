@@ -7,10 +7,11 @@ from cassandra.auth import PlainTextAuthProvider
 import pathlib
 import uuid
 from langchain.memory import CassandraChatMessageHistory, ConversationBufferMemory
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from cassandra.cluster import Session
 import re
+from llm.smart_chunker import split_chunks_responsibly
 
 class Document:
     def __init__(self, text, metadata=None):
@@ -26,6 +27,7 @@ embeddings = OpenAIEmbeddings()
 
 try:
     # Get the directory in which the current script is located
+    print("Creating cloud config")
     current_script_path = pathlib.Path(__file__).parent.absolute()
 
     secure_connect_bundle_path = current_script_path / 'secure-connect-smart-chunking.zip'
@@ -51,6 +53,7 @@ CLIENT_ID = secrets["clientId"]
 CLIENT_SECRET = secrets["secret"]
 ASTRA_DB_KEYSPACE = os.getenv("ASTRA_DB_KEYSPACE")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+print("Connecting to Astra")
 
 auth_provider = PlainTextAuthProvider(CLIENT_ID, CLIENT_SECRET)
 cluster = Cluster(cloud=cloud_config, auth_provider=auth_provider)
@@ -59,21 +62,12 @@ astraSession = cluster.connect()
 session_id = uuid.uuid4()
 mem_key="chat_history"
 
-## If we want to add in message history (to create a chatbot), uncomment and integrate this code. However, it's not needed for the demo
-# message_history = CassandraChatMessageHistory(
-#     session_id=session_id,
-#     session=astraSession,
-#     keyspace=ASTRA_DB_KEYSPACE,
-# )
-# cass_buff_memory = ConversationBufferMemory(
-#    memory_key=mem_key,
-#    chat_memory=message_history
-# )
-
 def create_table_if_not_exists(session, keyspace):
+    print ("Using passed keyspace ", keyspace)
+    print("Creating table")
     # Create the table if it doesn't exist
     create_stmt = f"""
-    CREATE TABLE IF NOT EXISTS {keyspace}.text_embeddings (
+    CREATE TABLE IF NOT EXISTS {keyspace}.text_embeddings2 (
         id UUID PRIMARY KEY,
         text TEXT,
         embedding LIST<FLOAT>  -- Adjust the data type for 'embedding' as needed
@@ -81,27 +75,37 @@ def create_table_if_not_exists(session, keyspace):
     """
     try:
         session.execute(create_stmt)
-        print("Table 'text_embeddings' created or already exists in keyspace", keyspace)
+        print("Table 'text_embeddings2' created or already exists in keyspace", keyspace)
     except Exception as e:
         print("Error creating table:", e)
 
 
 def sanitize_text(text):
+    print("Sanitizing text")
     # Remove unsafe characters for Cassandra
     sanitized_text = re.sub(r"[^\w\s]", "", text)
 
     # Remove unsafe characters for Python
     sanitized_text = sanitized_text.replace("'", "")
 
-    return sanitized_text
+    # Encode to UTF-8 to ensure proper encoding of characters
+    # Note: This encoding step returns a bytes object in Python 3
+    # If you need to work with a string in your application, decode it back
+    sanitized_text_bytes = sanitized_text.encode('utf-8')
 
-def create_vector_db_with_cassandra(folder_path: str, astraSession: Session):
+    # If you need to work with the text as a string downstream, decode it back
+    sanitized_text_str = sanitized_text_bytes.decode('utf-8')
+
+    return sanitized_text_str
+
+def create_vector_db_with_cassandra(folder_path: str, astraSession: Session, enable_smart_chunking: bool, chunk_size: int = 5000):
     # When we update the data, we want to clear the existing data in the table and rebuild it from scratch (because I'm lazy and didn't want to write the code to update the data)
-    create_table_if_not_exists(astraSession, ASTRA_DB_KEYSPACE)
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
+    keyspace = ASTRA_DB_KEYSPACE if not enable_smart_chunking else "smart_chunking"
+    print("Using keyspace ", keyspace)
+    create_table_if_not_exists(astraSession, keyspace)
 
     # Truncate the table to clear existing data
-    truncate_stmt = f"TRUNCATE {ASTRA_DB_KEYSPACE}.text_embeddings;"
+    truncate_stmt = f"TRUNCATE {keyspace}.text_embeddings;"
 
     # Execute the truncate statement
     astraSession.execute(truncate_stmt)
@@ -122,10 +126,15 @@ def create_vector_db_with_cassandra(folder_path: str, astraSession: Session):
 
                 # Sanitize the transcript
                 sanitized_transcript = sanitize_text(transcript)
-
+                docs = []
                 # Wrap the sanitized transcript in a Document object
                 doc_object = Document(sanitized_transcript)
-                docs = text_splitter.split_documents([doc_object])
+                if enable_smart_chunking:
+                    chunk_texts = split_chunks_responsibly(doc_object, target_chunk_size=chunk_size)
+                    docs = [Document(chunk_text) for chunk_text in chunk_texts]  # Wrap each chunk text in a Document object
+                else:        
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=500)
+                    docs = text_splitter.split_documents([doc_object])
 
                 for _, doc in enumerate(docs):
                     # Embed the content of the document
@@ -135,10 +144,12 @@ def create_vector_db_with_cassandra(folder_path: str, astraSession: Session):
                     doc_id = uuid.uuid4()
 
                     # Store the document text and its embedding in Cassandra
+                    print("Inserting document into Cassandra keyspace ", keyspace, " with text " , doc.page_content[:100] + "...") 
                     insert_stmt = astraSession.prepare(f"""
-                        INSERT INTO {ASTRA_DB_KEYSPACE}.text_embeddings (id, text, embedding)
+                        INSERT INTO {keyspace}.text_embeddings2 (id, text, embedding)
                         VALUES (?, ?, ?)
                     """)
                     astraSession.execute(insert_stmt, [doc_id, doc.page_content, embedding])
+    print("Returning ", keyspace)
 
-    return ASTRA_DB_KEYSPACE
+    return keyspace

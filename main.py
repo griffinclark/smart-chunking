@@ -1,5 +1,5 @@
 import streamlit as st
-from astra.cassandra_helper import astraSession, create_vector_db_with_cassandra, ASTRA_DB_KEYSPACE
+from astra.cassandra_helper import astraSession, create_vector_db_with_cassandra
 from dotenv import load_dotenv
 import os
 import json  # Import json for reading the user_roles.json file
@@ -32,10 +32,16 @@ with st.sidebar:
 
     # Only show other options if a valid user role is selected
     if user_role != 'Choose one...':
+        # Problem to solve. Default is choose a problem, options are Llama Index or Uber Q/K
+        problem = st.selectbox(
+            "Select the problem to solve",
+            options=['Choose one...', 'Llama Index', 'Uber Q/K'],
+            index=0  # Default to 'Choose one...'
+        )
         enable_smart_chunking = st.checkbox("Enable Smart Chunking")
 
         user_input = st.text_area(
-            "What would you like to know about Llama Index?",
+            "Enter your query here",
             height=300
         )
 
@@ -44,18 +50,19 @@ with st.sidebar:
             help="Number of documents to fetch from the database",
             min_value=1,
             max_value=(128000 - 1500) // 5000,
-            value=10,
+            value=20,
             step=1
         )
 
         if st.button("Generate Response"):
-            llm_response, _ = get_response_from_query(user_input, k, user_role)
+            llm_response, _ = get_response_from_query(user_input, k, user_role, enable_smart_chunking, problem)
             response_text = response_text.join(llm_response)
 
         if st.button("Rebuild Database"):
             keyspace = create_vector_db_with_cassandra(
                 folder_path="./data",
-                astraSession=astraSession
+                astraSession=astraSession,
+                enable_smart_chunking=enable_smart_chunking
             )   
             st.text("Database rebuilt!")
 
