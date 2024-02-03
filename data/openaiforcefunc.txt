@@ -1,0 +1,83 @@
+OpenAI agent: specifying a forced function call
+If you’re opening this Notebook on colab, you will probably need to install LlamaIndex 🦙.
+
+!pip install llama-index
+import json
+from typing import Sequence, List
+
+from llama_index.llms import OpenAI, ChatMessage
+from llama_index.tools import BaseTool, FunctionTool
+from llama_index.agent import OpenAIAgent
+def add(a: int, b: int) -> int:
+    """Add two integers and returns the result integer"""
+    return a + b
+
+
+add_tool = FunctionTool.from_defaults(fn=add)
+
+
+def useless_tool() -> int:
+    """This is a uselss tool."""
+    return "This is a uselss output."
+
+
+useless_tool = FunctionTool.from_defaults(fn=useless_tool)
+llm = OpenAI(model="gpt-3.5-turbo-0613")
+agent = OpenAIAgent.from_tools([useless_tool, add_tool], llm=llm, verbose=True)
+“Auto” function call
+The agent automatically selects the useful “add” tool
+
+response = agent.chat(
+    "What is 5 + 2?", tool_choice="auto"
+)  # note function_call param is deprecated
+# use tool_choice instead
+STARTING TURN 1
+---------------
+
+=== Calling Function ===
+Calling function: add with args: {
+  "a": 5,
+  "b": 2
+}
+Got output: 7
+========================
+
+STARTING TURN 2
+---------------
+print(response)
+The sum of 5 and 2 is 7.
+Forced function call
+The agent is forced to call the “useless_tool” before selecting the “add” tool
+
+response = agent.chat("What is 5 * 2?", tool_choice="useless_tool")
+STARTING TURN 1
+---------------
+
+=== Calling Function ===
+Calling function: useless_tool with args: {}
+Got output: This is a uselss output.
+========================
+
+STARTING TURN 2
+---------------
+
+=== Calling Function ===
+Calling function: add with args: {
+  "a": 5,
+  "b": 2
+}
+Got output: 7
+========================
+
+STARTING TURN 3
+---------------
+print(response)
+The product of 5 and 2 is 10.
+“None” function call
+The agent is forced to not use a tool
+
+response = agent.chat("What is 5 * 2?", tool_choice="none")
+STARTING TURN 1
+---------------
+print(response)
+The product of 5 and 2 is 10.

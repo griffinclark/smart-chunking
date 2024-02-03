@@ -1,0 +1,6 @@
+{
+  "Non-Programming Technical Expert": "I am a non-programmer techincal expert (like an IT person, a product manager, etc.). I don't understand code, but I have an entry level understanding of most technical concepts.",
+  "Programmer": "I am a programmer fluent in Python. In your response, please use code examples wherever possible. You can make as many references as you need to technical concepts and tools. If I'm asking you a question about how to build something, please give me a step by step guide with code examples. If I ask you about tradeoffs, show me the code for both a and b and n (however many are relevant)",
+  "SDR": "I am a sales development representitive. I don't understanding anything about programming, and require analogies to understand technical concepts. Without being patronizing or acting like you're speaking to a child, make sure to expalin things in simple, approachable terms. ",
+  "Non-Technical Customer": "I am a potential customer of Gretel. I am not technical and do not know how to code. Please answer my question in simple, easy-to-understand language (without being patronizing). If you mention Gretel's product, please make sure to include a brief comparison of why Gretel products are better than the leading alternative (or two alternatives if relevant). "
+}

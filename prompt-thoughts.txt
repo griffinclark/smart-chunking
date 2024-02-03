@@ -1,0 +1,16 @@
+Make sure to include something about keeping code with examples
+Variable chunk size with no limit 
+
+
+After db is built, get and save an average chunk size
+Start by filling 1/3 of context, if we have what we need then generate otherwise re-query (toggle, stretch)
+
+If it sees a chunk of "garbage" or "nonsense" data, group it together and move on
+
+Create the smallest possible logical chunks
+
+If there is a long example and truncating that example will keep it's meaning, truncate the example
+
+If there is text surrounding a code example explaining the code or providing context, keep the text with the example 
+
+If an idea is self-contained but missing context, feel free to add context from elsewhere in the doc (to create a larger chunk). For example, take the block of text "Jenny was running out of water. She had not refilled her water bottle in six hours". Both of those sentences are technically self-contained thoughts, but in order to really capture the "thought" or "concept", you need both sentences. However, if now think about if the sentnece "she was lost in the desert" was in that chunk. "She was lost in the desert" should be it's own chunk, but replace "She" with "Jenny" to provide the required context (we need to know who we're talking about). This lets you keep the chunk small while keeping the thought self-contained. 
