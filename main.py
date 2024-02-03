@@ -32,12 +32,6 @@ with st.sidebar:
 
     # Only show other options if a valid user role is selected
     if user_role != 'Choose one...':
-        # Problem to solve. Default is choose a problem, options are Llama Index or Uber Q/K
-        problem = st.selectbox(
-            "Select the problem to solve",
-            options=['Choose one...', 'Llama Index', 'Uber Q/K'],
-            index=0  # Default to 'Choose one...'
-        )
         enable_smart_chunking = st.checkbox("Enable Smart Chunking")
 
         user_input = st.text_area(
@@ -49,14 +43,18 @@ with st.sidebar:
             "k",
             help="Number of documents to fetch from the database",
             min_value=1,
-            max_value=(128000 - 1500) // 5000,
+            max_value=25,
             value=20,
             step=1
         )
 
         if st.button("Generate Response"):
-            llm_response, _ = get_response_from_query(user_input, k, user_role, enable_smart_chunking, problem)
+            llm_response, docs = get_response_from_query(user_input, k, user_role, enable_smart_chunking)
             response_text = response_text.join(llm_response)
+
+            # Print each document in docs
+            for doc in docs:
+                print("\n"+doc + "\n")
 
         if st.button("Rebuild Database"):
             keyspace = create_vector_db_with_cassandra(

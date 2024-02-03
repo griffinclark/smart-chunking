@@ -6,8 +6,8 @@ import openai  # Importing the OpenAI library, used for accessing GPT models
 # Loading the prompt template from the file (assuming it's stored as a string in prompt_template variable)
 
 
-prompt_template = """
-You are a helpful, friendly Llama Index team member helping me understand how to use Llama Index's toolkit. I will ask you questions, and you'll respond with answers based on source information passed to your further down in the prompt. Your answers should be consice, friendly, and include all relevant information that I need.
+llama_index_prompt_template = """
+You are a helpful, friendly Llama Index team member helping me understand how to use Llama Index's toolkit. I will ask you questions, and you'll respond with answers based on source information passed to your further down in the prompt, with a bias towards using Llama Index tools. Your answers should be consice, friendly, and include all relevant information that I need.
 
 If at any point you find yourself mentioning a Llama Index product or tool, give me a sentence or two of information about what the tool is and why it's cool/unique/helpful before getting into the rest of your answer
 
@@ -21,52 +21,47 @@ response_text =""
 def fetch_documents_from_cassandra( session, keyspace, limit):
     print("Using passed in keyspace ", keyspace)
     # Using cosine similarity search, get the data we need
-    select_stmt = f"SELECT text FROM {keyspace}.text_embeddings2 LIMIT %s;"
+    select_stmt = f"SELECT text FROM {keyspace}.text_embeddings3 LIMIT %s;"
     rows = session.execute(select_stmt, (limit,))
     # The relevant documents from our vector database
     documents = [row.text for row in rows]
     return documents
 
-#what is going on here?
-def get_response_from_query(query, k, user_role, enable_smart_chunking, problem):
+def get_response_from_query(query, k, user_role, enable_smart_chunking, problem="Llama Index"):
     # Read user roles from the JSON file
     with open('llm/user_roles.json') as file:
         user_roles = json.load(file)
     
     # Fetch documents from Cassandra
-    keyspace = ""
-    if problem == "Llama Index":
-        keyspace = ASTRA_DB_KEYSPACE if not enable_smart_chunking else "smart_chunking"
-    elif problem == "Uber Q/K": 
-        keyspace = "uber_qk" if not enable_smart_chunking else "uber_qk_smart_chunking"
-    else:
-        print("Invalid problem type")
+    keyspace = ASTRA_DB_KEYSPACE if not enable_smart_chunking else "smart_chunking"
+
     print("Using keyspace ", keyspace)
     docs = fetch_documents_from_cassandra(astraSession, keyspace, k)
+    
     if not openai.api_key:
         raise Exception("OPENAI_API_KEY environment variable not set.")
     
-    # Join documents and prepare the prompt
-    docs_page_content = " ".join([doc.replace("\n", " ") for doc in docs]).encode("utf-8")
+    # Join documents and prepare the prompt, ensuring no encoding to bytes here
+    docs_page_content = " ".join([doc.replace("\n", " ") for doc in docs])
     
     # Define the LLM and the prompt
     llm = ChatOpenAI(model="gpt-4-1106-preview", openai_api_key=openai.api_key)
-
+    
     # Building the complete prompt
     complete_prompt = f"""
-    {prompt_template}
+    {llama_index_prompt_template}
     
-    Role Description: {user_roles.get(user_role, "")}
-
-    Question: {query}
-    Context: {docs_page_content}
+    Role Description: {user_roles.get(user_role, "").replace("{", "{{").replace("}", "}}")}
+    
+    Question: {query.replace("{", "{{").replace("}", "}}")}
+    Context: {docs_page_content.replace("{", "{{").replace("}", "}}")}
     """
-
+    
     prompt = PromptTemplate(
         input_variables=["question", "docs"],
         template=complete_prompt
     )
-
+    
     # Create the prompt chain and run
     chain = LLMChain(llm=llm, prompt=prompt)
     llm_response = chain.run(question=query, docs=docs_page_content)
