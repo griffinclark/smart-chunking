@@ -12,6 +12,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from cassandra.cluster import Session
 import re
 from llm.smart_chunker import split_chunks_responsibly
+import shutil
+
 
 class Document:
     def __init__(self, text, metadata=None):
@@ -67,7 +69,7 @@ def create_table_if_not_exists(session, keyspace):
     print("Creating table")
     # Create the table if it doesn't exist
     create_stmt = f"""
-    CREATE TABLE IF NOT EXISTS {keyspace}.text_embeddings3 (
+    CREATE TABLE IF NOT EXISTS {keyspace}.text_embeddings0 (
         id UUID PRIMARY KEY,
         text TEXT,
         embedding LIST<FLOAT>  -- Adjust the data type for 'embedding' as needed
@@ -75,9 +77,11 @@ def create_table_if_not_exists(session, keyspace):
     """
     try:
         session.execute(create_stmt)
-        print("Table 'text_embeddings3' created or already exists in keyspace", keyspace)
+        print("Table 'text_embeddings0' created or already exists in keyspace", keyspace)
     except Exception as e:
         print("Error creating table:", e)
+
+        
 
 
 def sanitize_text(text):
@@ -93,18 +97,15 @@ def sanitize_text(text):
 
     return sanitized_text
 
-def create_vector_db_with_cassandra(folder_path: str, astraSession: Session, enable_smart_chunking: bool, chunk_size: int = 5000):
+def create_vector_db_with_cassandra(folder_path: str, astraSession: Session, enable_smart_chunking: bool, chunk_size: int = 512):
     # When we update the data, we want to clear the existing data in the table and rebuild it from scratch (because I'm lazy and didn't want to write the code to update the data)
     keyspace = ASTRA_DB_KEYSPACE if not enable_smart_chunking else "smart_chunking"
     print("Using keyspace ", keyspace)
     create_table_if_not_exists(astraSession, keyspace)
 
-    # Truncate the table to clear existing data
-    truncate_stmt = f"TRUNCATE {keyspace}.text_embeddings;"
-
-    # Execute the truncate statement
-    astraSession.execute(truncate_stmt)
-    print("Cleared existing data in the table.")
+    processed_folder_path = os.path.join(folder_path, 'processed')
+    if not os.path.exists(processed_folder_path):
+        os.makedirs(processed_folder_path)
 
     # Ensure the folder exists
     if not os.path.exists(folder_path):
@@ -128,7 +129,7 @@ def create_vector_db_with_cassandra(folder_path: str, astraSession: Session, ena
                     chunk_texts = split_chunks_responsibly(doc_object, target_chunk_size=chunk_size)
                     docs = [Document(chunk_text) for chunk_text in chunk_texts]  # Wrap each chunk text in a Document object
                 else:        
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=500)
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=100)
                     docs = text_splitter.split_documents([doc_object])
 
                 for _, doc in enumerate(docs):
@@ -141,10 +142,14 @@ def create_vector_db_with_cassandra(folder_path: str, astraSession: Session, ena
                     # Store the document text and its embedding in Cassandra
                     print("Inserting document into Cassandra keyspace ", keyspace, " with text " , doc.page_content[:100] + "...") 
                     insert_stmt = astraSession.prepare(f"""
-                        INSERT INTO {keyspace}.text_embeddings3 (id, text, embedding)
+                        INSERT INTO {keyspace}.text_embeddings0 (id, text, embedding)
                         VALUES (?, ?, ?)
                     """)
                     astraSession.execute(insert_stmt, [doc_id, doc.page_content, embedding])
+
+                processed_file_path = os.path.join(processed_folder_path, filename)
+                shutil.move(file_path, processed_file_path)
+                print(f"Moved {filename} to processed folder.")
     print("Returning ", keyspace)
 
     return keyspace

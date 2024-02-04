@@ -5,7 +5,14 @@ import os
 import json  # Import json for reading the user_roles.json file
 from llm.llm_helper import get_response_from_query, response_text
 import openai
+import time
+import tiktoken
+encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
+# Other imports remain the same
+
+def token_count(text):
+    return len(encoding.encode(text))
 load_dotenv()
 
 session = astraSession
@@ -43,18 +50,22 @@ with st.sidebar:
             "k",
             help="Number of documents to fetch from the database",
             min_value=1,
-            max_value=25,
-            value=20,
+            max_value=300,
+            value=60,
             step=1
         )
 
         if st.button("Generate Response"):
+            start_time = time.time()
             llm_response, docs = get_response_from_query(user_input, k, user_role, enable_smart_chunking)
             response_text = response_text.join(llm_response)
-
-            # Print each document in docs
-            for doc in docs:
-                print("\n"+doc + "\n")
+            total_tokens = sum(token_count(doc) for doc in docs)
+    
+    # End timer
+            end_time = time.time()
+            generation_time = end_time - start_time
+            st.write(f"Generation Time: {generation_time:.2f} seconds")
+            st.write(f"Total Context Token Count: {total_tokens}")
 
         if st.button("Rebuild Database"):
             keyspace = create_vector_db_with_cassandra(
